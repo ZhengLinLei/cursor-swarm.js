@@ -77,6 +77,8 @@ new CursorSwarm({
   guides: true,               // crosshair guide lines
   sparks: true,               // particles when an element is done
   caret: true,                // blinking caret while typing
+  copyPaste: false,           // true (50%) | 0..1: copy repeated elements from a built sibling (see below)
+  relocation: false,          // true (30%) | 0..1: build some elements out of place, then drag them home
   zIndex: 2147483000,
   respectReducedMotion: true, // do nothing for prefers-reduced-motion users
 
@@ -105,6 +107,30 @@ new CursorSwarm({
 | `on(ev, fn)` / `off(ev, fn)` | Events: `start`, `build`, `unbuild`, `idle`, `done`, `pause`, `resume`, `stop`, `destroy`, `palette`. |
 
 Properties: `state` (`idle`, `running`, `paused`, `stopped`, `destroyed`), `progress` (0 to 1), `colors` (current agent colors), `agents`, `records`.
+
+## Copy-paste and relocation
+
+Two optional behaviors that make the agents look like they are really editing the page:
+
+```js
+new CursorSwarm({
+  copyPaste: true,   // or a probability: 0.7
+  relocation: true   // or a probability: 0.5
+}).init();
+```
+
+**`copyPaste`**: when an agent reaches a repeated element (a card in a grid, a pricing plan, a chip, a photo next to others), it may skip building it from scratch. Instead it selects an identical sibling that is already built (`⌘C`/`Ctrl+C`), drags a copy over to the new spot while resizing it, pastes it (`⌘V`), and then edits it into the real content. Siblings count as repeated when they have the same parent, tag and classes. `true` means a 50% chance per element.
+
+**`relocation`**: some elements are created slightly out of place (shifted and tilted, with a dashed outline marking where they belong). Once built, the agent grabs them and moves them into position. `true` means a 30% chance. Very large, `fixed` and `sticky` elements are never moved.
+
+Force either behavior per element:
+
+```html
+<div class="card" data-cs-copy="true">…</div>      <!-- always copy-pasted when a built twin is on screen -->
+<div class="card" data-cs-copy="false">…</div>     <!-- never -->
+<img data-cs-relocate="true" …>                     <!-- always built out of place -->
+<h2 data-cs-relocate="false">…</h2>                 <!-- never -->
+```
 
 ## Palettes
 
@@ -154,6 +180,8 @@ Fine-tune detection directly in your markup:
 <h2 data-cs="words">…</h2>           <!-- force a type: frame | pop | type | words | media -->
 <img data-cs-dir="t" …>              <!-- media scan direction: l | r | t -->
 <p data-cs-label="intro">…</p>       <!-- name shown in the HUD -->
+<div data-cs-copy="true">…</div>     <!-- force / prevent copy-paste: true | false -->
+<img data-cs-relocate="true" …>      <!-- force / prevent relocation: true | false -->
 ```
 
 ## Avoiding a flash of content
@@ -180,9 +208,9 @@ python3 -m http.server 8787
 
 Then visit http://localhost:8787/examples/.
 
-- **saas-landing**: 3 agents, brand colors, deconstruct
+- **saas-landing**: 3 agents, brand colors, deconstruct, copy-paste cards
 - **blog-article**: 2 named agents that fly in from outside and leave after building
-- **photo-portfolio**: 6 agents, random start, hidden when idle
+- **photo-portfolio**: 6 agents, random start, hidden when idle, relocation + copy-paste
 - **restaurant**: 1 agent with a custom start position, no HUD, builds once
 - **zero-js**: only `data-*` attributes
 - **monochrome**: a site built from one base color; the toolbar recolors the site and the swarm live with `setPalette()`

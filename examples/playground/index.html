@@ -58,6 +58,8 @@
         <label>deconstruct <input id="dec" type="checkbox" checked></label>
         <label>frames <input id="fr" type="checkbox" checked></label>
         <label>sparks <input id="spk" type="checkbox" checked></label>
+        <label>copy-paste <input id="cp" type="checkbox" checked></label>
+        <label>relocation <input id="rl" type="checkbox" checked></label>
         <label>hud <input id="hud" type="checkbox" checked></label>
         <div class="row">
             <button class="main" id="restart">↻ Apply &amp; restart</button>
@@ -116,6 +118,8 @@
             deconstruct: $('dec').checked,
             frames: $('fr').checked,
             sparks: $('spk').checked,
+            copyPaste: $('cp').checked,
+            relocation: $('rl').checked,
             hud: $('hud').checked,
             hudPosition: 'bottom-left',
             palette: $('pal').value

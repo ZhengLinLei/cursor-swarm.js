@@ -64,7 +64,9 @@
             cursors: 6,
             startPosition: 'random',
             speed: 1.3,
-            idle: 'hide'
+            idle: 'hide',
+            relocation: 0.5,    // half the photos are dropped out of place and dragged into position
+            copyPaste: true
         }).init();
 
         swarm.on('done', () => console.log('Portfolio fully built!'));

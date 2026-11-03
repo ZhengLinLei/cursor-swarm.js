@@ -29,6 +29,9 @@
     };
     const ROLE_OF = { frame: 'layout', pop: 'layout', type: 'type', words: 'type', media: 'media' };
     const VERB = { frame: 'drawing', pop: 'spawning', type: 'writing', words: 'writing', media: 'placing' };
+    const MOD = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+';
+    const OFF = 'translate(-9999px,-9999px)'; // where overlay pieces wait until they're positioned
+    const chance = v => (v === true ? null : +v || 0); // null = use the default probability
     const TYPES = ['frame', 'pop', 'type', 'words', 'media'];
     const MEDIA_TAGS = { IMG: 1, VIDEO: 1, CANVAS: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, svg: 1, SVG: 1 };
     const CONTROL_TAGS = { BUTTON: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1, PROGRESS: 1, METER: 1 };
@@ -62,6 +65,9 @@
         guides: true,               // crosshair guide lines while measuring
         sparks: true,               // particles when an element is finished
         caret: true,                // blinking caret while typing
+        copyPaste: false,           // true | 0..1: repeated siblings (cards, chips…) are sometimes copied from an
+                                    // already built one, dragged into place and then changed into the real content
+        relocation: false,          // true | 0..1: some elements are built out of place, then dragged into position
         zIndex: 2147483000,
         respectReducedMotion: true, // do nothing for prefers-reduced-motion users
         onBuild: null,              // (el, type, agent) => {}
@@ -167,6 +173,11 @@
 .cs-cur svg{display:block}.cs-cur path{transition:fill .4s ease,stroke .4s ease}
 .cs-cur span{position:absolute;left:18px;top:20px;white-space:nowrap;font:700 10px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;background:var(--c);color:var(--ink,#000);padding:4px 7px;transition:opacity .4s ease,background .4s ease,color .4s ease}
 .cs-cur.cs-flip span{left:auto;right:4px}
+.cs-cur em{position:absolute;left:18px;top:-18px;font:700 10px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-style:normal;letter-spacing:.04em;white-space:nowrap;background:#111;color:#fff;border:1px solid var(--c);border-radius:3px;padding:3px 6px;opacity:0;transform:translateY(4px);transition:opacity .2s ease,transform .2s ease}
+.cs-cur.cs-flip em{left:auto;right:4px}
+.cs-cur.cs-key em{opacity:1;transform:none}
+.cs-drop{position:absolute;top:0;left:0;border:1.5px dashed var(--c);background:color-mix(in srgb,var(--c) 7%,transparent);border-radius:4px;opacity:0;transition:opacity .3s ease}
+.cs-ghost{pointer-events:none!important;transition:none!important}
 .cs-cur.cs-dim{opacity:.45}.cs-cur.cs-dim span{opacity:0}
 .cs-cur.cs-hidden{opacity:0}
 .cs-mq{position:absolute;top:0;left:0;border:1px dashed var(--c);background:color-mix(in srgb,var(--c) 8%,transparent);opacity:0}
@@ -213,12 +224,22 @@ html.cs-cloak body{visibility:hidden}
             this.paused = false;
             this.instant = false;
             this.raf = 0;
+            this.tracks = new Set();
             this.loop = this.loop.bind(this);
+        }
+        /** call fn every frame until the returned function is called */
+        track(fn) {
+            this.tracks.add(fn);
+            fn();
+            this.start();
+            return () => this.tracks.delete(fn);
         }
         tween(dur, ease, fn) {
             return new Promise(res => {
                 if (this.instant || dur <= 0) { if (fn) fn(1); res(); return; }
-                this.list.add({ t: 0, dur, ease: ease || EASE.none, fn, res });
+                ease = ease || EASE.none;
+                if (fn) fn(ease(0)); // first frame right away: nothing is ever painted before it's positioned
+                this.list.add({ t: 0, dur, ease, fn, res });
                 this.start();
             });
         }
@@ -238,14 +259,16 @@ html.cs-cloak body{visibility:hidden}
                 if (tw.fn) tw.fn(tw.ease(p));
                 if (p >= 1) { this.list.delete(tw); tw.res(); }
             }
-            this.raf = this.list.size && !this.paused ? requestAnimationFrame(this.loop) : 0;
+            this.tracks.forEach(f => f());
+            this.raf = (this.list.size || this.tracks.size) && !this.paused ? requestAnimationFrame(this.loop) : 0;
         }
         pause() { this.paused = true; cancelAnimationFrame(this.raf); this.raf = 0; }
-        resume() { this.paused = false; if (this.list.size) this.start(); }
+        resume() { this.paused = false; if (this.list.size || this.tracks.size) this.start(); }
         flush() {
             this.instant = true;
             for (const tw of [...this.list]) { if (tw.fn) tw.fn(1); tw.res(); }
             this.list.clear();
+            this.tracks.clear();
             cancelAnimationFrame(this.raf); this.raf = 0;
         }
     }
@@ -620,6 +643,7 @@ html.cs-cloak body{visibility:hidden}
         _finish(rec) {
             const el = rec.el, s = rec.saved;
             if (rec.parts) rec.parts.forEach(p => p.classList.add('cs-on'));
+            this._undisplace(rec);
             if (rec.type === 'media' && !rec.revealing) { el.style.clipPath = s.clipPath || ''; if (rec.img) rec.img.style.scale = ''; }
             if (rec.type === 'pop') { el.style.opacity = s.opacity || ''; el.style.scale = s.scale || ''; }
             if (rec.type === 'frame') el.classList.remove('cs-frame-off');
@@ -628,6 +652,7 @@ html.cs-cloak body{visibility:hidden}
 
         _reset(rec) {
             const el = rec.el;
+            this._undisplace(rec);
             if (rec.parts) rec.parts.forEach(p => p.classList.remove('cs-on'));
             if (rec.type === 'media') el.style.clipPath = this._clip(rec.dir, 0);
             if (rec.type === 'pop') { el.style.opacity = 0; el.style.scale = .4; }
@@ -637,6 +662,7 @@ html.cs-cloak body{visibility:hidden}
 
         _restore(rec) {
             const el = rec.el, s = rec.saved;
+            this._undisplace(rec);
             if (rec.swaps) rec.swaps.forEach(({ orig, made }) => { if (made[0] && made[0].parentNode) { made[0].before(orig); made.forEach(m => m.remove()); } });
             if (rec.type === 'media') { el.style.clipPath = s.clipPath || ''; if (rec.img) rec.img.style.scale = ''; }
             if (rec.type === 'pop') { el.style.opacity = s.opacity || ''; el.style.scale = s.scale || ''; }
@@ -672,12 +698,13 @@ html.cs-cloak body{visibility:hidden}
                 const color = c.color || colors[i % colors.length];
                 const roles = c.role ? [].concat(c.role) : roleSets[i];
                 const a = { name, color, roles, q: [], busy: false, i, fixedColor: !!c.color, els: [] };
-                const mk = (cls, inner) => { const d = document.createElement('div'); d.className = cls; if (inner) d.innerHTML = inner; this.layer.appendChild(d); a.els.push(d); return d; };
+                const mk = (cls, inner) => { const d = document.createElement('div'); d.className = cls; d.style.transform = OFF; if (inner) d.innerHTML = inner; this.layer.appendChild(d); a.els.push(d); return d; };
                 a.gh = mk('cs-gd cs-h'); a.gv = mk('cs-gd cs-v'); a.caret = mk('cs-caret');
                 a.mq = mk('cs-mq', '<i></i><i></i><i></i><i></i><b></b>'); a.lbl = a.mq.querySelector('b');
-                a.cur = mk('cs-cur', `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 2l7.6 19.2 2.7-8 7.9-2.8z" stroke-width="1.3" stroke-linejoin="round"/></svg>${o.labels ? `<span></span>` : ''}`);
+                a.cur = mk('cs-cur', `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 2l7.6 19.2 2.7-8 7.9-2.8z" stroke-width="1.3" stroke-linejoin="round"/></svg>${o.labels ? `<span></span>` : ''}<em></em>`);
                 if (o.labels) a.cur.querySelector('span').textContent = name;
                 a.path = a.cur.querySelector('path');
+                a.kbd = a.cur.querySelector('em');
                 this._paint(a, color);
                 a.home = this._startPos(i, n, c);
                 this._place(a, a.home.x, a.home.y);
@@ -841,7 +868,7 @@ html.cs-cloak body{visibility:hidden}
                 let guard = Date.now();
                 while (this._alive() && c.state !== 'built' && rec.want === 'built') {
                     // the box is stuck behind us in our own queue (or taking too long): just finish it
-                    if ((c.agent === a && c.queued) || (!c.queued && !c.active) || Date.now() - guard > 4000) {
+                    if ((c.agent === a && c.queued) || (!c.queued && !c.active) || Date.now() - guard > (c.copyRoll ? 9000 : 4000)) {
                         if (c.queued && c.agent) { c.agent.q.splice(c.agent.q.indexOf(c), 1); c.queued = false; }
                         if (!c.active) { c.want = 'built'; this._finish(c); }
                         break;
@@ -875,10 +902,26 @@ html.cs-cloak body{visibility:hidden}
                     const want = rec.want;
                     if (rec.state === want) continue;
                     if (!this._inView(rec.el)) { want === 'built' ? this._finish(rec) : this._reset(rec); continue; }
-                    this._say(a, want === 'built' ? VERB[rec.type] : 'removing', rec.label);
+                    const src = want === 'built' && this._copySource(rec);
+                    if (src === 'wait') {
+                        rec.copyWaits = (rec.copyWaits || 0) + 1;
+                        rec.queued = true;
+                        a.q.push(rec);
+                        await this.clock.wait(a.q[0] === rec ? .25 : .1);
+                        continue;
+                    }
+                    rec.copyRoll = null; rec.copyWaits = 0;
+                    const reloc = want === 'built' && !src && this._wantsRelocation(rec);
+                    this._say(a, src ? 'copy-pasting' : want === 'built' ? VERB[rec.type] : 'removing', rec.label);
                     rec.active = true;
-                    try { await (want === 'built' ? this._jobs : this._unjobs)[rec.type].call(this, a, rec); }
-                    catch (e) { console.error('[CursorSwarm]', e); }
+                    try {
+                        if (src) await this._copy(a, rec, src);
+                        else {
+                            if (reloc) this._displace(a, rec);
+                            await (want === 'built' ? this._jobs : this._unjobs)[rec.type].call(this, a, rec);
+                            if (reloc && this._alive()) { this._say(a, 'moving', rec.label); await this._relocate(a, rec); }
+                        }
+                    } catch (e) { console.error('[CursorSwarm]', e); }
                     rec.active = false;
                     if (!this._alive()) break;
                     want === 'built' ? this._finish(rec) : this._reset(rec);
@@ -909,10 +952,194 @@ html.cs-cloak body{visibility:hidden}
             this._emit('idle', a);
         }
 
+        /* ---------- COPY & PASTE ---------- */
+        _key(a, text) {
+            if (text) a.kbd.textContent = text;
+            a.cur.classList.toggle('cs-key', !!text);
+        }
+
+        _signature(el) {
+            const cls = typeof el.className === 'string' ? el.className.split(/\s+/).filter(c => c && !c.startsWith('cs-')).sort().join('.') : '';
+            return el.tagName + '|' + cls;
+        }
+
+        _tree(rec) { return [rec].concat(this.records.filter(r => r !== rec && r.containers.includes(rec))); }
+
+        // a built twin of `rec` that can be copied: same tag + classes, same parent, fully built and on screen
+        _copySource(rec) {
+            const o = this.opts, el = rec.el, force = el.dataset.csCopy;
+            if (force === 'false' || (!o.copyPaste && force !== 'true')) return null;
+            if (!['frame', 'pop', 'media'].includes(rec.type) || !el.parentElement) return null;
+            if ((this.byEl.get(el) || [])[0] !== rec) return null;
+            if (rec.copyRoll == null) { const p = chance(o.copyPaste); rec.copyRoll = force === 'true' || Math.random() < (p == null ? .5 : p); }
+            if (!rec.copyRoll) return null;
+            const sig = this._signature(el), sibs = [...el.parentElement.children];
+            const me = sibs.indexOf(el);
+            const twins = sibs.filter(s => s !== el && !s.classList.contains('cs-ghost') && this._signature(s) === sig && this.byEl.has(s) && this._inView(s));
+            const ok = twins.filter(s => this.byEl.get(s).every(r => this._tree(r).every(t => t.state === 'built' && !t.active && t.want === 'built')));
+            if (ok.length) return ok.sort((x, y) => Math.abs(sibs.indexOf(x) - me) - Math.abs(sibs.indexOf(y) - me))[0];
+            // a twin is still being built: worth waiting a moment for it
+            const pending = twins.some(s => this.byEl.get(s).some(r => r.want === 'built'));
+            return pending && (rec.copyWaits || 0) < 40 ? 'wait' : null;
+        }
+
+        // build `rec` (and everything inside it) at once, without animation
+        _finishTree(rec) {
+            this._tree(rec).forEach(r => {
+                r.want = 'built';
+                if (r.queued && r.agent) { const q = r.agent.q, i = q.indexOf(r); if (i > -1) q.splice(i, 1); r.queued = false; }
+                if (r === rec || !r.active) this._finish(r);
+            });
+        }
+
+        async _copy(a, rec, src) {
+            const el = rec.el, sr = () => src.getBoundingClientRect(), tr = () => el.getBoundingClientRect();
+            const center = R => ({ x: R.left + R.width * .5, y: R.top + R.height * .5 });
+            await this._travel(a, () => center(sr()), .45);
+
+            // select the original
+            const sel = this._mk('cs-drop', a.color);
+            const stopSel = this.clock.track(() => { const R = sr(); Object.assign(sel.style, { transform: `translate(${R.left - 3}px,${R.top - 3}px)`, width: R.width + 6 + 'px', height: R.height + 6 + 'px' }); });
+            sel.style.opacity = 1;
+            this._key(a, MOD + 'C');
+            await this.clock.wait(.35);
+
+            // the copy lives next to the original so the page's own CSS still applies to it
+            const S = sr(), ghost = src.cloneNode(true);
+            ghost.setAttribute('data-cs-ignore', '');
+            ghost.setAttribute('aria-hidden', 'true');
+            ghost.removeAttribute('id');
+            ghost.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+            ghost.classList.remove('cs-frame-fade');
+            ghost.classList.add('cs-ghost');
+            Object.assign(ghost.style, {
+                position: 'absolute', left: '0px', top: '0px', margin: '0', boxSizing: 'border-box', zIndex: 2147482000,
+                width: S.width + 'px', height: S.height + 'px', translate: '0px 0px', rotate: '0deg', scale: '', opacity: '0', clipPath: '',
+                boxShadow: '0 26px 60px -18px rgba(0,0,0,.55)', outline: `1.5px solid ${a.color}`, outlineOffset: '2px'
+            });
+            src.parentElement.appendChild(ghost);
+            let tx = 0, ty = 0;
+            const put = (x, y, w, h) => {
+                if (w != null) { ghost.style.width = w + 'px'; ghost.style.height = h + 'px'; }
+                const g = ghost.getBoundingClientRect();
+                tx += x - g.left; ty += y - g.top;
+                ghost.style.translate = `${tx}px ${ty}px`;
+            };
+            try {
+                // peel the copy off the original
+                await this.clock.tween(.3, EASE.out, p => {
+                    const R = sr();
+                    put(R.left + 14 * p, R.top + 14 * p);
+                    ghost.style.opacity = .92 * p;
+                    this._place(a, R.left + R.width * .5 + 14 * p, R.top + R.height * .5 + 14 * p);
+                });
+                stopSel(); sel.style.opacity = 0;
+                this._key(a, 'drag');
+
+                // drag it to where the new element goes, resizing on the way
+                const drop = this._mk('cs-drop', a.color);
+                const stopDrop = this.clock.track(() => { const R = tr(); Object.assign(drop.style, { transform: `translate(${R.left}px,${R.top}px)`, width: R.width + 'px', height: R.height + 'px' }); });
+                drop.style.opacity = 1;
+                await this.clock.tween(.7, EASE.inOut, p => {
+                    const A = sr(), B = tr();
+                    const x = lerp(A.left + 14, B.left, p), y = lerp(A.top + 14, B.top, p);
+                    const w = lerp(A.width, B.width, p), h = lerp(A.height, B.height, p);
+                    put(x, y, w, h);
+                    this._place(a, x + w * .5, y + h * .5);
+                });
+                stopDrop(); drop.style.opacity = 0;
+                setTimeout(() => drop.remove(), 400);
+
+                // paste, then turn the copy into the real content
+                this._key(a, MOD + 'V');
+                this._finishTree(rec);
+                this._spark(tr(), a.color);
+                await this.clock.wait(.2);
+                this._key(a, 'edit');
+                await this.clock.tween(.45, EASE.out, p => {
+                    const B = tr();
+                    put(B.left, B.top, B.width, B.height);
+                    ghost.style.opacity = .92 * (1 - p);
+                    ghost.style.filter = `blur(${4 * p}px)`;
+                    this._place(a, B.left + B.width * .5, B.top + B.height * .5);
+                });
+            } finally {
+                stopSel(); sel.remove();
+                ghost.remove();
+                this._key(a, null);
+            }
+        }
+
+        /* ---------- RELOCATION ---------- */
+        _wantsRelocation(rec) {
+            const o = this.opts, el = rec.el, force = el.dataset.csRelocate;
+            if (force === 'false' || (!o.relocation && force !== 'true')) return false;
+            if (!['frame', 'pop', 'media', 'type'].includes(rec.type)) return false;
+            if ((this.byEl.get(el) || [])[0] !== rec) return false; // one move per element
+            if (rec.containers.some(c => c.offset)) return false;   // its box is already being moved
+            const R = el.getBoundingClientRect();
+            if (force !== 'true') {
+                if (R.width > innerWidth * .85 || R.height > innerHeight * .7) return false;
+                if (/fixed|sticky/.test(getComputedStyle(el).position)) return false;
+                const p = chance(o.relocation);
+                if (Math.random() >= (p == null ? .3 : p)) return false;
+            }
+            return true;
+        }
+
+        // push the element out of place (staying inside the viewport) and mark where it belongs
+        _displace(a, rec) {
+            const el = rec.el, R = el.getBoundingClientRect(), s = rec.saved;
+            const rnd = (lo, hi) => (lo + Math.random() * (hi - lo)) * (Math.random() < .5 ? -1 : 1);
+            const dx = clamp(rnd(50, 130), -R.left + 8, Math.max(-R.left + 8, innerWidth - R.right - 8));
+            const dy = rnd(30, 90);
+            const rot = rnd(2, rec.type === 'type' ? 3 : 7);
+            if (!('translate' in s)) { s.translate = el.style.translate; s.rotate = el.style.rotate; }
+            el.style.translate = `${dx}px ${dy}px`;
+            el.style.rotate = `${rot}deg`;
+            const doc = { left: R.left + scrollX, top: R.top + scrollY, width: R.width, height: R.height };
+            const drop = this._mk('cs-drop', a.color);
+            const stop = this.clock.track(() => Object.assign(drop.style, { transform: `translate(${doc.left - scrollX}px,${doc.top - scrollY}px)`, width: doc.width + 'px', height: doc.height + 'px' }));
+            drop.style.opacity = .8;
+            rec.offset = { dx, dy, rot, drop, stop };
+        }
+
+        async _relocate(a, rec) {
+            const el = rec.el, o = rec.offset;
+            if (!o) return;
+            const R = () => el.getBoundingClientRect();
+            const c = () => ({ x: R().left + R().width * .5, y: R().top + R().height * .5 });
+            await this._travel(a, c, .35);
+            this._key(a, 'move');
+            await this.clock.wait(.12);
+            await this.clock.tween(.65, EASE.inOut, p => {
+                const k = 1 - p;
+                el.style.translate = `${o.dx * k}px ${o.dy * k}px`;
+                el.style.rotate = `${o.rot * k}deg`;
+                const C = c();
+                this._place(a, C.x, C.y);
+            });
+            this._key(a, null);
+            this._spark(R(), a.color);
+            this._undisplace(rec);
+        }
+
+        _undisplace(rec) {
+            const o = rec.offset;
+            if (!o) return;
+            o.stop();
+            o.drop.style.opacity = 0;
+            setTimeout(() => o.drop.remove(), 350);
+            rec.el.style.translate = rec.saved.translate || '';
+            rec.el.style.rotate = rec.saved.rotate || '';
+            rec.offset = null;
+        }
+
         /* ---------- VISUALS ---------- */
         _mk(cls, color) {
             const d = document.createElement('div');
             d.className = cls;
+            d.style.transform = OFF;
             d.style.setProperty('--c', color);
             this.layer.appendChild(d);
             return d;
