@@ -6,7 +6,7 @@
 
 A swarm of "agent" cursors that **builds your web page in front of the visitor** as they scroll: they draw the boxes, type the headings, write the paragraphs and scan the images into place. Scroll back up and they take it apart again.
 
-Inspired by [zll.me](https://zll.me). Zero dependencies, ~1 file, works on any existing site.
+Inspired by [zll.me](https://zll.me) and [Swarm](https://califa.github.io/swarm-site/). Zero dependencies, ~1 file, works on any existing site.
 
 ```html
 <script src="cursor-swarm.js"></script>
